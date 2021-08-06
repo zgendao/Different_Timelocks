@@ -36,6 +36,8 @@ contract AgoraSpace is Ownable {
 
     event Deposit(address indexed wallet, uint256 amount);
     event Withdraw(address indexed wallet, uint256 amount);
+    event NewRank(uint256 minDuration, uint256 goalAmount, uint8 id);
+    event ModifyRank(uint256 minDuration, uint256 goalAmount, uint8 id);
 
     /// @param _tokenAddress The address of the token to be staked, that the contract accepts
     /// @param _stakeTokenAddress The address of the token that's given in return
@@ -63,7 +65,8 @@ contract AgoraSpace is Ownable {
                 "New rank's duration can't be shorter than the previous one's  "
             );
         }
-        ranks.push(Rank(_minDuration, _goalAmount, ranks.length));
+        ranks.push(Rank(_minDuration, _goalAmount, ranksLength));
+        emit NewRank(_minDuration, _goalAmount, ranksLength);
     }
 
     /// @notice Modifies a new rank
@@ -99,6 +102,7 @@ contract AgoraSpace is Ownable {
         }
 
         ranks[_id] = Rank(_minDuration, _goalAmount, _id);
+        emit ModifyRank(_minDuration, _goalAmount, _id);
     }
 
     /// @notice Accepts tokens, locks them and gives different tokens in return

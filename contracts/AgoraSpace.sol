@@ -93,8 +93,6 @@ contract AgoraSpace is Ownable {
         ranks[_id] = Rank(_minDuration, _goalAmount, _id);
     }
 
-    //TODO Utolsó elem törlése
-
     /// @notice Accepts tokens, locks them and gives different tokens in return
     /// @dev The depositor should approve the contract to manage stakingTokens
     /// @dev For minting stakeTokens, this contract should be the owner of them
@@ -108,13 +106,22 @@ contract AgoraSpace is Ownable {
         require(timelocks[msg.sender].length < 600, "Too many consecutive deposits");
         require(ranks.length > 0, "There isn't any rank to deposit to");
         require(_rankId <= ranks.length - 1, "Invalid rank");
-        //TODO Consolidate
+
+        if (
+            rankBalances[_rankId][msg.sender].unLocked + rankBalances[_rankId][msg.sender].locked + _amount >=
+            ranks[_rankId].goalAmount
+        ) {
+            unlockBelow(_rankId, msg.sender);
+        } else if (_consolidate && ranks.length > 0) {
+            consolidate(_amount, _rankId, msg.sender);
+        }
+
         LockedItem memory timelockData;
         timelockData.expires = block.timestamp + ranks[_rankId].minDuration * 1 minutes;
         timelockData.amount = _amount;
         timelockData.rankId = _rankId;
         timelocks[msg.sender].push(timelockData);
-        rankBalances[_rankId][msg.sender].locked = +_amount;
+        rankBalances[_rankId][msg.sender].locked += _amount;
         IAgoraToken(stakeToken).mint(msg.sender, _amount);
         IERC20(token).transferFrom(msg.sender, address(this), _amount);
         emit Deposit(msg.sender, _amount);
@@ -126,12 +133,13 @@ contract AgoraSpace is Ownable {
     /// @param _amount The amount to be withdrawn in the smallest unit of the token
     function withdraw(uint256 _amount, uint8 _rankId) external {
         require(_amount > 0, "Non-positive withdraw amount");
-        require(
-            IAgoraToken(stakeToken).balanceOf(msg.sender) - getLockedAmount(msg.sender) >= _amount,
+        /* require(
+            IAgoraToken(stakeToken).balanceOf(msg.sender) - unlockExpired(msg.sender) >= _amount,
             "Not enough unlocked tokens"
-        );
+        ); */
+        unlockExpired(msg.sender);
         require(rankBalances[_rankId][msg.sender].unlocked >= _amount, "Not enough unlocked tokens in this rank");
-        rankBalances[_rankId][msg.sender].unlocked = -_amount;
+        rankBalances[_rankId][msg.sender].unlocked -= _amount;
         IAgoraToken(stakeToken).burn(msg.sender, _amount);
         IERC20(token).transfer(msg.sender, _amount);
         emit Withdraw(msg.sender, _amount);
@@ -146,28 +154,153 @@ contract AgoraSpace is Ownable {
     /// @notice Checks the amount of locked tokens for an account and deletes any expired lock data
     /// @param _investor The address whose tokens should be checked
     /// @return The amount of locked tokens
-    function getLockedAmount(address _investor) public returns (uint256) {
+    function unlockExpired(address _investor) public {
+        // eredetileg volt egy return u256
         uint256 lockedAmount;
+        uint8 ranksLength = ranks.length - 1;
+        mapping(uint8 => uint256) memory expired;
         LockedItem[] storage usersLocked = timelocks[_investor];
         int256 usersLockedLength = int256(usersLocked.length);
         uint256 blockTimestamp = block.timestamp;
         for (int256 i = 0; i < usersLockedLength; i++) {
             if (usersLocked[uint256(i)].expires <= blockTimestamp) {
+                expired[usersLocked[uint256(i)].rankId] += usersLocked[uint256(i)].amount;
                 //Unlock locked balances
-                rankBalances[usersLocked[uint256(i)].rankId][_investor].locked = -usersLocked[uint256(i)].amount;
-                rankBalances[usersLocked[uint256(i)].rankId][_investor].unlocked = +usersLocked[uint256(i)].amount;
                 // Expired locks, remove them
                 usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
                 usersLocked.pop();
                 usersLockedLength--;
                 i--;
-            } else {
+            } /* else {
                 // Still not expired, count it in
                 lockedAmount += usersLocked[uint256(i)].amount;
-            }
+            } */
         }
-        return lockedAmount;
+        for (uint8 i = 0; i <= ranksLength; i++) {
+            rankBalances[i][_investor].locked -= expired[i];
+            rankBalances[i][_investor].unlocked += expired[i];
+        }
+        /* return lockedAmount; */
     }
 
-    //TODO Function Consolidate
+    function viewExpired(address _investor, uint8 _rankId) public view returns (uint256) {
+        uint256 expiredAmount;
+        LockedItem[] memory usersLocked = timelocks[_investor];
+        int256 usersLockedLength = int256(usersLocked.length);
+        uint256 blockTimestamp = block.timestamp;
+        for (uint256 i = 0; i < usersLockedLength; i++) {
+            if (usersLocked[i].rankId == _rankId && usersLocked[i].expires <= blockTimestamp) {
+                expiredAmount += usersLocked[i].amount;
+            }
+        }
+        return expiredAmount;
+    }
+
+    function unlockBelow(uint8 _rankId, address _investor) internal {
+        LockedItem[] storage usersLocked = timelocks[_investor];
+        int256 usersLockedLength = int256(usersLocked.length);
+        mapping(uint8 => uint256) memory unLocked;
+        uint8 ranksLength = ranks.length - 1;
+
+        for (uint8 i = 0; i < _rankId; i++) {
+            if (rankBalances[i][_investor].locked > 0) {
+                for (int256 i = 0; i < usersLockedLength; i++) {
+                    if (usersLocked[uint256(i)].rankId < _rankId) {
+                        unLocked[usersLocked[uint256(i)].rankId] += usersLocked[uint256(i)].amount;
+                        //Unlock locked balances
+                        // Expired locks, remove them
+                        usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
+                        usersLocked.pop();
+                        usersLockedLength--;
+                        i--;
+                    }
+                }
+                break;
+            }
+        }
+        for (uint8 i = 0; i < _rankId; i++) {
+            if (rankBalances[i][_investor].locked > 0) {
+                for (int256 i = 0; i < usersLockedLength; i++) {
+                    if (usersLocked[uint256(i)].rankId < _rankId) {
+                        unLocked[usersLocked[uint256(i)].rankId] += usersLocked[uint256(i)].amount;
+                        //Unlock locked balances
+                        // Expired locks, remove them
+                        usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
+                        usersLocked.pop();
+                        usersLockedLength--;
+                        i--;
+                    }
+                }
+                break;
+            }
+        }
+        for (uint8 i = 0; i <= ranksLength; i++) {
+            rankBalances[i][_investor].locked -= unLocked[i];
+            rankBalances[i][_investor].unlocked += unLocked[i];
+        }
+    }
+
+    function consolidate(
+        uint256 _amount,
+        uint8 _rankId,
+        address _investor
+    ) internal {
+        uint256 consolidateAmount = ranks[_rankId].goalAmount -
+            rankBalances[_rankId][_investor].unlocked -
+            rankBalances[_rankId][_investor].locked -
+            _amount;
+        uint256 totalBalanceBelow;
+
+        uint256 lockedBalance;
+        uint256 unLockedBalance;
+
+        LockedItem[] storage usersLocked = timelocks[_investor];
+        int256 usersLockedLength = int256(usersLocked.length);
+
+        for (uint8 i = 0; i < _rankId; i++) {
+            lockedBalance = rankBalances[i][_investor].locked;
+            unlockedBalance = rankBalances[i][_investor].unlocked;
+
+            if (lockedBalance > 0) {
+                totalBalanceBelow = +lockedBalance;
+                rankBalances[i][_investor].locked = 0;
+            }
+
+            if (unlockedBalance > 0) {
+                totalBalanceBelow = +unlockedBalance;
+                rankBalances[i][_investor].unlocked = 0;
+            }
+        }
+
+        if (totalBalanceBelow > 0) {
+            LockedItem memory timelockData;
+            //Végigmegyünk a locked listán és feloldunk mindent aminek az id-ja kisebb a megadottnál
+            for (int256 i = 0; i < usersLockedLength; i++) {
+                if (usersLocked[uint256(i)].rankId < _rankId) {
+                    usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
+                    usersLocked.pop();
+                    usersLockedLength--;
+                    i--;
+                }
+            }
+            if (totalBalanceBelow > consolidateAmount) {
+                //Létrehozok egy új lock elemet ami értéke a consolidateAmount és lekötöm a _rankId idejére. minden más fel lesz oldva a rang alatt.
+
+                timelockData.expires = block.timestamp + ranks[_rankId].minDuration * 1 minutes;
+                timelockData.amount = consolidateAmount;
+                timelockData.rankId = _rankId;
+                timelocks[_investor].push(timelockData);
+                rankBalances[_rankId][_investor].locked += consolidateAmount; //_amount a függvényen után lesz lezárva
+                rankBalances[_rankId][_investor].unlocked += totalBalanceBelow - consolidateAmount;
+            } else {
+                //Létrehozok egy új lock elemet ami értéke a totalBalanceBelow  és lekötöm a _rankId idejére.
+                timelockData.expires = block.timestamp + ranks[_rankId].minDuration * 1 minutes;
+                timelockData.amount = totalBalanceBelow;
+                timelockData.rankId = _rankId;
+                timelocks[_investor].push(timelockData);
+
+                rankBalances[_rankId][_investor].locked += totalBalanceBelow; //_amount a függvényen után lesz lezárva
+            }
+        }
+    }
 }

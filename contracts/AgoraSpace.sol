@@ -18,6 +18,7 @@ contract AgoraSpace is Ownable {
         uint256 amount;
         uint256 rankId;
     }
+
     // For ranking
     uint256 numOfRanks;
 
@@ -25,13 +26,15 @@ contract AgoraSpace is Ownable {
         uint256 minDuration;
         uint256 goalAmount;
     }
-    //For storing balances
+
+    // For storing balances
     struct Balance {
         uint256 locked;
         uint256 unlocked;
     }
+
     // Bigger id equals higher rank
-    mapping(uint256 => Rank) public rankMapp;
+    mapping(uint256 => Rank) public ranks;
 
     mapping(uint256 => mapping(address => Balance)) public rankBalances;
 
@@ -47,24 +50,24 @@ contract AgoraSpace is Ownable {
         stakeToken = _stakeTokenAddress;
     }
 
-    /// @notice Creats a new rank
+    /// @notice Creates a new rank
     /// @dev Only the new highest rank can be added
-    /// @dev The goal amount and the lock time have to be atleast same amount as the previus one
+    /// @dev The goal amount and the lock time can't be lower than in the previous rank
     /// @param _minDuration The duration of the lock
     /// @param _goalAmount The amount of tokens needed to reach the rank
     function addRank(uint256 _minDuration, uint256 _goalAmount) external onlyOwner {
         require(numOfRanks < 256, "Too many ranks");
         if (numOfRanks >= 1) {
-            require(rankMapp[numOfRanks - 1].goalAmount <= _goalAmount,"Goal Amount is too small");
-            require(rankMapp[numOfRanks - 1].minDuration <= _minDuration,"Duration is too short");
+            require(ranks[numOfRanks - 1].goalAmount <= _goalAmount, "Goal amount is too small");
+            require(ranks[numOfRanks - 1].minDuration <= _minDuration, "Duration is too short");
         }
-        rankMapp[numOfRanks] = (Rank(_minDuration, _goalAmount));
+        ranks[numOfRanks] = (Rank(_minDuration, _goalAmount));
         emit NewRank(_minDuration, _goalAmount, numOfRanks);
         numOfRanks++;
     }
 
-    /// @notice Modifies a new rank
-    /// @dev Values must be between of the previus and the next ranks'
+    /// @notice Modifies a rank
+    /// @dev Values must be between the previous and the next ranks'
     /// @param _minDuration New duration of the lock
     /// @param _goalAmount New amount of tokens needed to reach the rank
     /// @param _id The id of the rank to be modified
@@ -74,19 +77,19 @@ contract AgoraSpace is Ownable {
         uint256 _id
     ) external onlyOwner {
         require(numOfRanks > 0, "There are no ranks");
-        require(_id <= numOfRanks - 1, "Rank dosen't exist");
+        require(_id <= numOfRanks - 1, "Rank doesn't exist");
 
         if (_id > 0) {
-            require(rankMapp[_id - 1].goalAmount <= _goalAmount, "New Goal Amount is too small");
-            require(rankMapp[_id - 1].minDuration <= _minDuration,"New Duration is too short");
+            require(ranks[_id - 1].goalAmount <= _goalAmount, "New goal amount is too small");
+            require(ranks[_id - 1].minDuration <= _minDuration, "New duration is too short");
         }
 
         if (_id < numOfRanks - 1) {
-            require(rankMapp[_id + 1].goalAmount >= _goalAmount, "New Goal Amount is too big");
-            require(rankMapp[_id + 1].minDuration >= _minDuration,"New Duration is too long");
+            require(ranks[_id + 1].goalAmount >= _goalAmount, "New goal amount is too big");
+            require(ranks[_id + 1].minDuration >= _minDuration, "New duration is too long");
         }
 
-        rankMapp[_id] = Rank(_minDuration, _goalAmount);
+        ranks[_id] = Rank(_minDuration, _goalAmount);
         emit ModifyRank(_minDuration, _goalAmount, _id);
     }
 
@@ -107,15 +110,14 @@ contract AgoraSpace is Ownable {
         require(_rankId <= numOfRanks - 1, "Invalid rank");
         if (
             rankBalances[_rankId][msg.sender].unlocked + rankBalances[_rankId][msg.sender].locked + _amount >=
-            rankMapp[_rankId].goalAmount
+            ranks[_rankId].goalAmount
         ) {
             unlockBelow(_rankId, msg.sender);
-        } else if (_consolidate && numOfRanks > 0) {
+        } else if (_consolidate) {
             consolidate(_amount, _rankId, msg.sender);
         }
-
         LockedItem memory timelockData;
-        timelockData.expires = block.timestamp + rankMapp[_rankId].minDuration * 1 minutes;
+        timelockData.expires = block.timestamp + ranks[_rankId].minDuration * 1 minutes;
         timelockData.amount = _amount;
         timelockData.rankId = _rankId;
         timelocks[msg.sender].push(timelockData);
@@ -148,16 +150,16 @@ contract AgoraSpace is Ownable {
         int256 usersLockedLength = int256(usersLocked.length);
         for (int256 i = 0; i < usersLockedLength; i++) {
             if (usersLocked[uint256(i)].expires <= block.timestamp) {
-                //Collect expired amounts per ranks
+                // Collect expired amounts per ranks
                 expired[usersLocked[uint256(i)].rankId] += usersLocked[uint256(i)].amount;
-                // Expired locks, remove them
+                // Remove expired locks
                 usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
                 usersLocked.pop();
                 usersLockedLength--;
                 i--;
             }
         }
-        // Moving expired amounts from locked to unlocked
+        // Move expired amounts from locked to unlocked
         for (uint256 i = 0; i < numOfRanks; i++) {
             rankBalances[i][_investor].locked -= expired[i];
             rankBalances[i][_investor].unlocked += expired[i];
@@ -167,11 +169,11 @@ contract AgoraSpace is Ownable {
     /// @notice Sums the locked tokens for an account by ranks if they were expired
     /// @param _investor The address whose tokens should be checked
     /// @param _rankId The id of the rank to be checked
-    /// @return The total amount of expired but not unlocked tokens in the rank
+    /// @return The total amount of expired, but not unlocked tokens in the rank
     function viewExpired(address _investor, uint256 _rankId) public view returns (uint256) {
         uint256 expiredAmount;
         LockedItem[] memory usersLocked = timelocks[_investor];
-        uint256 usersLockedLength = uint256(usersLocked.length);
+        uint256 usersLockedLength = usersLocked.length;
         for (uint256 i = 0; i < usersLockedLength; i++) {
             if (usersLocked[i].rankId == _rankId && usersLocked[i].expires <= block.timestamp) {
                 expiredAmount += usersLocked[i].amount;
@@ -180,7 +182,7 @@ contract AgoraSpace is Ownable {
         return expiredAmount;
     }
 
-    /// @notice Unlocks every deposite below a certan rank
+    /// @notice Unlocks every deposit below a certain rank
     /// @dev Should be called, when the minimum of a rank is reached
     /// @param _investor The address whose tokens should be checked
     /// @param _rankId The id of the rank to be checked
@@ -188,14 +190,13 @@ contract AgoraSpace is Ownable {
         LockedItem[] storage usersLocked = timelocks[_investor];
         int256 usersLockedLength = int256(usersLocked.length);
         uint256[] memory unlocked = new uint256[](numOfRanks);
-
         for (uint256 i = 0; i < _rankId; i++) {
             if (rankBalances[i][_investor].locked > 0) {
                 for (int256 j = 0; j < usersLockedLength; j++) {
                     if (usersLocked[uint256(j)].rankId < _rankId) {
-                        //Collet the amount to be unlocked per rank
+                        // Collect the amount to be unlocked per rank
                         unlocked[usersLocked[uint256(j)].rankId] += usersLocked[uint256(j)].amount;
-                        // Expired locks, remove them
+                        // Remove expired locks
                         usersLocked[uint256(j)] = usersLocked[uint256(usersLockedLength) - 1];
                         usersLocked.pop();
                         usersLockedLength--;
@@ -204,14 +205,14 @@ contract AgoraSpace is Ownable {
                 }
             }
         }
-        // Moving unlocked amounts from locked to unlocked
+        // Move unlocked amounts from locked to unlocked
         for (uint256 i = 0; i < numOfRanks; i++) {
             rankBalances[i][_investor].locked -= unlocked[i];
             rankBalances[i][_investor].unlocked += unlocked[i];
         }
     }
 
-    /// @notice Collects the investments up to a certain rank if its needed to reach the minimum
+    /// @notice Collects the investments up to a certain rank if it's needed to reach the minimum
     /// @dev There must be more than 1 rank
     /// @dev The minimum should not be reached with the new deposit
     /// @dev The deposited amount must be locked after the function call
@@ -223,7 +224,7 @@ contract AgoraSpace is Ownable {
         uint256 _rankId,
         address _investor
     ) internal {
-        uint256 consolidateAmount = rankMapp[_rankId].goalAmount -
+        uint256 consolidateAmount = ranks[_rankId].goalAmount -
             rankBalances[_rankId][_investor].unlocked -
             rankBalances[_rankId][_investor].locked -
             _amount;
@@ -252,7 +253,7 @@ contract AgoraSpace is Ownable {
 
         if (totalBalanceBelow > 0) {
             LockedItem memory timelockData;
-            // Iterate over the locked list, and unlocks everything below the rank
+            // Iterate over the locked list and unlock everything below the rank
             for (int256 i = 0; i < usersLockedLength; i++) {
                 if (usersLocked[uint256(i)].rankId < _rankId) {
                     usersLocked[uint256(i)] = usersLocked[uint256(usersLockedLength) - 1];
@@ -261,17 +262,17 @@ contract AgoraSpace is Ownable {
                     i--;
                 }
             }
-            //Create a new locked item and lock it, for the rank's duration
-            timelockData.expires = block.timestamp + rankMapp[_rankId].minDuration * 1 minutes;
+            // Create a new locked item and lock it for the rank's duration
+            timelockData.expires = block.timestamp + ranks[_rankId].minDuration * 1 minutes;
             timelockData.rankId = _rankId;
 
             if (totalBalanceBelow > consolidateAmount) {
-                //set consolidateAmount as the locked amount
+                // Set consolidateAmount as the locked amount
                 timelockData.amount = consolidateAmount;
                 rankBalances[_rankId][_investor].locked += consolidateAmount;
                 rankBalances[_rankId][_investor].unlocked += totalBalanceBelow - consolidateAmount;
             } else {
-                //set totalBalanceBelow as the locked amount
+                // Set totalBalanceBelow as the locked amount
                 timelockData.amount = totalBalanceBelow;
                 rankBalances[_rankId][_investor].locked += totalBalanceBelow;
             }

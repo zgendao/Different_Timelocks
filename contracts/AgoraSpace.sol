@@ -113,7 +113,7 @@ contract AgoraSpace is Ownable {
             ranks[_rankId].goalAmount
         ) {
             unlockBelow(_rankId, msg.sender);
-        } else if (_consolidate) {
+        } else if (_consolidate && _rankId > 0) {
             consolidate(_amount, _rankId, msg.sender);
         }
         LockedItem memory timelockData;

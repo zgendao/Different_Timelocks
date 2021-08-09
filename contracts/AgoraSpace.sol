@@ -134,8 +134,9 @@ contract AgoraSpace is Ownable {
     /// @param _rankId The id of the rank to be withdrawn from
     function withdraw(uint256 _amount, uint256 _rankId) external {
         require(_amount > 0, "Non-positive withdraw amount");
+        uint256 expired = viewExpired(msg.sender, _rankId);
+        require(rankBalances[_rankId][msg.sender].unlocked + expired >= _amount, "Not enough unlocked tokens");
         unlockExpired(msg.sender);
-        require(rankBalances[_rankId][msg.sender].unlocked >= _amount, "Not enough unlocked tokens");
         rankBalances[_rankId][msg.sender].unlocked -= _amount;
         IAgoraToken(stakeToken).burn(msg.sender, _amount);
         IERC20(token).transfer(msg.sender, _amount);
@@ -144,7 +145,7 @@ contract AgoraSpace is Ownable {
 
     /// @notice Checks the locked tokens for an account and unlocks them if they're expired
     /// @param _investor The address whose tokens should be checked
-    function unlockExpired(address _investor) public {
+    function unlockExpired(address _investor) internal {
         uint256[] memory expired = new uint256[](numOfRanks);
         LockedItem[] storage usersLocked = timelocks[_investor];
         int256 usersLockedLength = int256(usersLocked.length);

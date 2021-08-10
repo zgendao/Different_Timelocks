@@ -20,7 +20,7 @@ contract AgoraSpace is Ownable {
     }
 
     // For ranking
-    uint256 numOfRanks;
+    uint256 public numOfRanks;
 
     struct Rank {
         uint256 minDuration;

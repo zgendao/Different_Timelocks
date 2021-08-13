@@ -77,10 +77,7 @@ contract("AgoraBank", async function (accounts) {
     });
 
     it("should revert if not the owner is trying to change the timelock duration", async function () {
-      await expectRevert(
-        this.bank.changeTimelockInterval(new BN(586868), { from: accounts[2] }),
-        "Ownable: caller is not the owner"
-      );
+      await expectRevert.unspecified(this.bank.changeTimelockInterval(new BN(586868), { from: accounts[2] }));
     });
 
     it("should allow the owner to change the reward amount", async function () {
@@ -181,10 +178,7 @@ contract("AgoraBank", async function (accounts) {
 
   context("withdrawing", async function () {
     it("should revert if the tokens are not unlocked yet", async function () {
-      await expectRevert(
-        this.bank.withdraw(this.firstCommunity, new BN(1), { from: accounts[0] }),
-        "Stake still locked"
-      );
+      await expectRevert.unspecified(this.bank.withdraw(this.firstCommunity, new BN(1), { from: accounts[0] }));
     });
 
     it("should not revert after the tokens are unlocked", async function () {
